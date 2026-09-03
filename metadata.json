@@ -1,0 +1,7 @@
+{
+  "name": "개인정보 보호 약속나무",
+  "description": "개인정보보호 실천 약속, OX 퀴즈, 스피드 골든벨 및 명예의 전당",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
