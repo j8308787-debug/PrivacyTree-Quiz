@@ -29,6 +29,8 @@ export interface AppSettings {
   roundStatus: 'idle' | 'countdown' | 'in_progress' | 'ended';
   roundStartTime: number | null; // epoch timestamp
   presetPledges?: string[];
+  lastResetUsersAt?: number;
+  lastResetSystemAt?: number;
 }
 
 export interface UserProfile {

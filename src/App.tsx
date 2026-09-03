@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   UserProfile,
   AppSettings,
@@ -17,6 +17,7 @@ import {
 } from './lib/firebase';
 import {
   getOrCreateUserProfile,
+  checkCodeRegistration,
   performWatering,
   toggleLikePledge,
   calculateTreeLevel,
@@ -64,6 +65,19 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [levelUpLevel, setLevelUpLevel] = useState<TreeLevelConfig | null>(null);
 
+  // Refs for real-time listener synchronization without stale closure
+  const currentUserRef = useRef<UserProfile | null>(null);
+  const sessionStartTimeRef = useRef<number>(Date.now());
+  const isAdminOpenRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  useEffect(() => {
+    isAdminOpenRef.current = isAdminOpen;
+  }, [isAdminOpen]);
+
   // Toast message state
   const [toastMessage, setToastMessage] = useState<{ text: string; type?: 'info' | 'success' } | null>(null);
   const [soundActive, setSoundActive] = useState(true);
@@ -72,6 +86,26 @@ export default function App() {
   const showToast = (text: string, type: 'info' | 'success' = 'info') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Forced logout when admin resets participants or total data
+  const forceParticipantLogout = (reason: string = '참여자 데이터가 초기화되어 로그아웃되었습니다.') => {
+    localStorage.removeItem('privacy_tree_user_code');
+    currentUserRef.current = null;
+    setCurrentUser(null);
+    setIsPledgeOpen(false);
+    setIsPledgeBoardOpen(false);
+    setIsOxQuizOpen(false);
+    setIsGoldenBellOpen(false);
+    setIsHallOfFameOpen(false);
+    setLevelUpLevel(null);
+    setIsWateringLoading(false);
+
+    // If admin panel is currently open on this screen, do not overlap with login modal
+    if (!isAdminOpenRef.current) {
+      setIsLoginOpen(true);
+    }
+    showToast(reason, 'info');
   };
 
   // 1. Initialize Firestore collections and Listeners
@@ -89,7 +123,18 @@ export default function App() {
       // Listen to settings
       unsubscribeSettings = onSnapshot(doc(db, 'app_settings', 'config'), (snap) => {
         if (snap.exists()) {
-          setSettings({ ...DEFAULT_APP_SETTINGS, ...snap.data() } as AppSettings);
+          const data = snap.data();
+          const newSettings = { ...DEFAULT_APP_SETTINGS, ...data } as AppSettings;
+          setSettings(newSettings);
+
+          // If admin triggered participant reset after participant's current session started
+          if (
+            newSettings.lastResetUsersAt &&
+            newSettings.lastResetUsersAt > sessionStartTimeRef.current &&
+            currentUserRef.current
+          ) {
+            forceParticipantLogout('관리자에 의해 참여자 데이터가 초기화되어 로그아웃되었습니다.');
+          }
         }
       });
 
@@ -98,12 +143,19 @@ export default function App() {
         const list = snap.docs.map((d) => d.data() as UserProfile);
         setUsers(list);
 
-        // Keep current user updated
-        setCurrentUser((prev) => {
-          if (!prev) return null;
-          const updatedSelf = list.find((u) => u.id === prev.id);
-          return updatedSelf || prev;
-        });
+        // Keep current user updated, or force logout if deleted/reset by admin
+        if (currentUserRef.current) {
+          const updatedSelf = list.find(
+            (u) => u.id === currentUserRef.current?.id || u.code === currentUserRef.current?.code
+          );
+          if (!updatedSelf) {
+            // User record was wiped by admin reset!
+            forceParticipantLogout('참여자 데이터가 초기화되어 로그아웃되었습니다.');
+          } else {
+            currentUserRef.current = updatedSelf;
+            setCurrentUser(updatedSelf);
+          }
+        }
       });
 
       // Listen to pledges
@@ -131,15 +183,20 @@ export default function App() {
       try {
         const savedCode = localStorage.getItem('privacy_tree_user_code');
         if (savedCode && /^\d{4}$/.test(savedCode)) {
-          const { user, isExisting } = await getOrCreateUserProfile(
-            savedCode,
-            initSettings.treeLevels || DEFAULT_TREE_LEVELS
-          );
-          setCurrentUser(user);
-          // Keep login modal closed on re-entry
-          setIsLoginOpen(false);
-          if (isExisting) {
+          // Verify user still exists in Firestore (prevent ghost restoration after admin reset)
+          const { exists, user } = await checkCodeRegistration(savedCode);
+          if (exists && user) {
+            sessionStartTimeRef.current = Date.now();
+            currentUserRef.current = user;
+            setCurrentUser(user);
+            setIsLoginOpen(false);
             showToast(`환영합니다! (${user.code} / ${user.points}P)`, 'success');
+          } else {
+            // Document was wiped by admin reset
+            localStorage.removeItem('privacy_tree_user_code');
+            currentUserRef.current = null;
+            setCurrentUser(null);
+            setIsLoginOpen(true);
           }
         } else {
           // Open login modal for first-time / logged-out visitors
@@ -231,6 +288,8 @@ export default function App() {
   // Handle User Login
   const handleLoginSuccess = (user: UserProfile, isExisting: boolean) => {
     localStorage.setItem('privacy_tree_user_code', user.code);
+    sessionStartTimeRef.current = Date.now();
+    currentUserRef.current = user;
     setCurrentUser(user);
     if (isExisting) {
       showToast(`로그인 완료! ${user.code} (${user.points}P 보유)`, 'success');
@@ -324,6 +383,7 @@ export default function App() {
   // Logout
   const handleLogout = () => {
     localStorage.removeItem('privacy_tree_user_code');
+    currentUserRef.current = null;
     setCurrentUser(null);
     setIsLoginOpen(true);
     showToast('로그아웃되었습니다.', 'info');
@@ -569,13 +629,20 @@ export default function App() {
 
       <AdminModal
         isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
+        onClose={() => {
+          setIsAdminOpen(false);
+          if (!currentUserRef.current) {
+            setIsLoginOpen(true);
+          }
+        }}
         settings={settings}
         users={users}
         pledges={pledges}
         quizzes={oxQuizzes}
         goldenBellQuestions={goldenBellQuestions}
         onSettingsUpdated={(newSettings) => setSettings(newSettings)}
+        onResetParticipants={() => forceParticipantLogout('참여자 데이터가 초기화되어 로그아웃되었습니다.')}
+        onResetAll={() => forceParticipantLogout('전체 시스템 데이터가 초기화되어 로그아웃되었습니다.')}
       />
 
       {levelUpLevel && (

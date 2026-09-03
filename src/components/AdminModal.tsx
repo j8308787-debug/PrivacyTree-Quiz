@@ -62,6 +62,8 @@ interface AdminModalProps {
   quizzes: OXQuiz[];
   goldenBellQuestions: GoldenBellQuestion[];
   onSettingsUpdated: (newSettings: AppSettings) => void;
+  onResetParticipants?: () => void;
+  onResetAll?: () => void;
 }
 
 interface ConfirmDialogState {
@@ -83,6 +85,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   quizzes,
   goldenBellQuestions,
   onSettingsUpdated,
+  onResetParticipants,
+  onResetAll,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'status' | 'participants' | 'pledges_admin' | 'ox_content' | 'golden_content' | 'tree' | 'security' | 'database'
@@ -636,7 +640,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setConfirmDialog({
       isOpen: true,
       title: '전체 참여자 초기화',
-      message: `현재 등록된 모든 참가자(${users.length}명)를 초기화하시겠습니까?`,
+      message: `현재 등록된 모든 참가자(${users.length}명)를 초기화하시겠습니까?\n초기화 시 현재 접속 중인 참여자들도 모두 즉시 자동 로그아웃됩니다.`,
       confirmLabel: '참여자 초기화',
       danger: true,
       onConfirm: async () => {
@@ -646,8 +650,18 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           const snap = await getDocs(collection(db, 'users'));
           const deletes = snap.docs.map((d) => deleteDoc(d.ref));
           await Promise.all(deletes);
+
+          const now = Date.now();
+          await updateDoc(doc(db, 'app_settings', 'config'), {
+            lastResetUsersAt: now,
+          });
+          onSettingsUpdated({ ...settings, lastResetUsersAt: now });
+
           localStorage.removeItem('privacy_tree_user_code');
-          notify('모든 참가자 데이터가 초기화되었습니다.');
+          if (onResetParticipants) {
+            onResetParticipants();
+          }
+          notify('모든 참가자 데이터가 초기화되었으며, 접속 중인 참여자가 로그아웃되었습니다.');
         } catch (err) {
           console.error('Reset users error:', err);
           notify('참여자 초기화 오류', 'error');
@@ -663,7 +677,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setConfirmDialog({
       isOpen: true,
       title: '전체 시스템 초기화 (Total Reset)',
-      message: '모든 참가자, 실천 약속, 골든벨 제출 기록이 영구 삭제됩니다.\n\n정말 진행하시겠습니까?',
+      message: '모든 참가자, 실천 약속, 골든벨 제출 기록이 영구 삭제됩니다.\n접속 중인 모든 참여자도 즉시 로그아웃됩니다.\n\n정말 진행하시겠습니까?',
       confirmLabel: '시스템 전체 초기화',
       danger: true,
       requiresTyping: '초기화',
@@ -680,14 +694,28 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           const subsSnap = await getDocs(collection(db, 'golden_bell_submissions'));
           await Promise.all(subsSnap.docs.map((d) => deleteDoc(d.ref)));
 
+          const now = Date.now();
           await updateDoc(doc(db, 'app_settings', 'config'), {
             activeRound: null,
             roundStatus: 'idle',
             roundStartTime: null,
+            lastResetUsersAt: now,
+            lastResetSystemAt: now,
+          });
+          onSettingsUpdated({
+            ...settings,
+            activeRound: null,
+            roundStatus: 'idle',
+            roundStartTime: null,
+            lastResetUsersAt: now,
+            lastResetSystemAt: now,
           });
 
           localStorage.removeItem('privacy_tree_user_code');
-          notify('시스템이 완전히 초기화되었습니다!');
+          if (onResetAll) {
+            onResetAll();
+          }
+          notify('시스템이 완전히 초기화되었으며, 모든 사용자가 로그아웃되었습니다!');
         } catch (err) {
           console.error('Reset all data error:', err);
           notify('초기화 중 오류가 발생했습니다.', 'error');
