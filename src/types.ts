@@ -13,6 +13,15 @@ export interface GoldenBellScheduleItem {
   endTime: string; // "10:30"
 }
 
+export interface BonusRoundItem {
+  id: string; // e.g. "bonus_1"
+  name: string; // "보너스 라운드", "보너스 라운드 2"
+  roundIndex: number; // 100, 101...
+  status: 'active' | 'ended';
+  createdAt: number;
+  endedAt?: number;
+}
+
 export interface AppSettings {
   treeLevels: TreeLevelConfig[];
   goldenBellSchedule: (GoldenBellScheduleItem | string)[];
@@ -25,9 +34,14 @@ export interface AppSettings {
   oxRewardDrops: number;
   wateringRewardPoints: number;
   pledgeRewardPoints: number;
-  activeRound: number | null; // 0~4 (Round 1~5) or null
+  activeRound: number | null; // 0~4 (Round 1~5) or 100+ (Bonus) or null
   roundStatus: 'idle' | 'countdown' | 'in_progress' | 'ended';
   roundStartTime: number | null; // epoch timestamp
+  isManualLive?: boolean; // whether currently running a manual bonus round
+  manualRoundTitle?: string; // e.g. "보너스 라운드"
+  bonusRounds?: BonusRoundItem[];
+  lastAwardedRoundKeys?: string[]; // to prevent duplicate auto rewards
+  forceStoppedRounds?: { [roundKey: string]: boolean };
   presetPledges?: string[];
   lastResetUsersAt?: number;
   lastResetSystemAt?: number;
@@ -44,6 +58,7 @@ export interface UserProfile {
   treeLevel: number;
   completedOxIds: string[];
   goldenBellRoundsPlayed: number[];
+  goldenBellPlayDate?: string; // YYYY-MM-DD to auto-reset play record daily at midnight
   createdAt: number;
 }
 
@@ -80,11 +95,13 @@ export interface GoldenBellQuestion {
 export interface GoldenBellSubmission {
   id: string;
   roundIndex: number;
+  roundName?: string;
   userId: string;
   userCode: string; // 4자리 숫자
   correctCount: number;
   totalTimeMs: number;
   submittedAt: number;
+  date?: string; // YYYY-MM-DD
   bonusAwarded: boolean;
   bonusPoints?: number;
   answers: {

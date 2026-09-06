@@ -13,7 +13,7 @@ import {
   awardGoldenBellRoundBonuses,
   seedDemoParticipants,
 } from '../lib/dataService';
-import { normalizeSchedule, getRoundTimeStatus } from '../lib/scheduleUtils';
+import { normalizeSchedule, getRoundTimeStatus, getTodayDateString } from '../lib/scheduleUtils';
 import { exportAllDataToExcel } from '../lib/excelExport';
 import {
   doc,
@@ -50,6 +50,7 @@ import {
   Hash,
   Sparkles,
   ArrowRight,
+  Trophy,
 } from 'lucide-react';
 import { playClickSound, playCorrectSound } from '../lib/sound';
 
@@ -105,6 +106,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [editableSchedule, setEditableSchedule] = useState<GoldenBellScheduleItem[]>(
     normalizeSchedule(settings.goldenBellSchedule)
   );
+  const [editableRewards, setEditableRewards] = useState({
+    first: settings.goldenBellRewards?.first ?? 50,
+    second: settings.goldenBellRewards?.second ?? 50,
+    third: settings.goldenBellRewards?.third ?? 50,
+  });
 
   // Admin password state
   const [newAdminPassword, setNewAdminPassword] = useState(settings.adminPassword || 'admin');
@@ -132,6 +138,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setEditableSchedule(normalizeSchedule(settings.goldenBellSchedule));
       setNewAdminPassword(settings.adminPassword || 'admin');
       setEditablePresetPledges(settings.presetPledges || DEFAULT_PRESET_PLEDGES);
+      setEditableRewards({
+        first: settings.goldenBellRewards?.first ?? 50,
+        second: settings.goldenBellRewards?.second ?? 50,
+        third: settings.goldenBellRewards?.third ?? 50,
+      });
       setNewPresetInput('');
       setEditingPresetIdx(null);
       setEditingPresetText('');
@@ -249,86 +260,75 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
   };
 
-  // Live Round Controller
-  const handleStartRound = async (roundIdx: number) => {
-    setLoadingAction(`start_r_${roundIdx}`);
-    playClickSound();
-    try {
-      const payload: Partial<AppSettings> = {
-        activeRound: roundIdx,
-        roundStatus: 'in_progress',
-        roundStartTime: Date.now(),
-      };
-      // Optimistic zero-delay local update
-      onSettingsUpdated({ ...settings, ...payload });
-      notify(`제 ${roundIdx + 1} 라운드 LIVE 시작되었습니다!`);
-
-      await updateDoc(doc(db, 'app_settings', 'config'), payload);
-    } catch (err) {
-      console.error('Start round error:', err);
-      notify('라운드 시작 오류', 'error');
-    } finally {
-      setLoadingAction(null);
+  // Stop currently running scheduled round early & award Top 3 bonus points immediately
+  const handleStopCurrentRound = async () => {
+    const activeIdx = settings.activeRound;
+    if (activeIdx === null || activeIdx === undefined) {
+      notify('현재 진행 중인 라운드가 없습니다.', 'error');
+      return;
     }
-  };
 
-  const handleEndRound = async (targetRoundIdx?: number) => {
-    const roundToAward = targetRoundIdx !== undefined ? targetRoundIdx : settings.activeRound;
-    setLoadingAction('end_round');
+    setLoadingAction('stop_live');
     playClickSound();
     try {
+      const roundTitle = `제 ${activeIdx + 1} 라운드`;
+      const todayStr = getTodayDateString();
+      const updatedForceStopped = {
+        ...(settings.forceStoppedRounds || {}),
+        [`${todayStr}_r${activeIdx}`]: true,
+      };
+
       const payload: Partial<AppSettings> = {
         roundStatus: 'ended',
         activeRound: null,
+        forceStoppedRounds: updatedForceStopped,
       };
-      // Optimistic zero-delay local update
+
       onSettingsUpdated({ ...settings, ...payload });
 
       await updateDoc(doc(db, 'app_settings', 'config'), payload);
 
-      // Immediately award TOP 3 +50P bonus on round end
-      if (roundToAward !== null && roundToAward !== undefined) {
-        const { awardedUsers } = await awardGoldenBellRoundBonuses(
-          roundToAward,
-          { first: 50, second: 50, third: 50 },
-          settings.treeLevels
-        );
-        if (awardedUsers.length > 0) {
-          const codes = awardedUsers.map((u) => `${u.rank}위 ${u.userCode}(+${u.bonus}P)`).join(', ');
-          notify(`제 ${roundToAward + 1} 라운드 종료! TOP 3 참가자에게 +50P가 즉시 지급되었습니다. (${codes})`);
-        } else {
-          notify(`제 ${roundToAward + 1} 라운드가 종료되었습니다. (지급 대상자가 없거나 이미 지급됨)`);
-        }
+      // Automatically award configured TOP 3 points
+      const rewards = settings.goldenBellRewards || editableRewards || { first: 50, second: 50, third: 50 };
+      const { awardedUsers } = await awardGoldenBellRoundBonuses(
+        activeIdx,
+        rewards,
+        settings.treeLevels
+      );
+
+      if (awardedUsers.length > 0) {
+        const codes = awardedUsers.map((u) => `${u.rank}위 ${u.userCode}(+${u.bonus}P)`).join(', ');
+        notify(`${roundTitle} 조기 종료! TOP 3 참가자에게 보너스 포인트가 자동 지급되었습니다. (${codes})`);
       } else {
-        notify('진행 중인 라운드가 종료되었습니다.');
+        notify(`${roundTitle}가 조기 종료되었습니다. (지급 대상 참여자가 없거나 이미 지급 완료됨)`);
       }
     } catch (err) {
-      console.error('End round error:', err);
-      notify('라운드 종료 오류', 'error');
+      console.error('Stop round error:', err);
+      notify('라운드 종료 중 오류가 발생했습니다.', 'error');
     } finally {
       setLoadingAction(null);
     }
   };
 
-  // Award TOP 3 Round Bonuses (+50P each)
-  const handleAwardTop3 = async (roundIdx: number) => {
-    setLoadingAction(`award_r_${roundIdx}`);
+  const handleSaveRewardTiers = async () => {
+    setLoadingAction('save_rewards');
     playClickSound();
     try {
-      const { awardedUsers } = await awardGoldenBellRoundBonuses(
-        roundIdx,
-        { first: 50, second: 50, third: 50 },
-        settings.treeLevels
-      );
-      if (awardedUsers.length === 0) {
-        notify(`제 ${roundIdx + 1} 라운드에 지급할 대상자가 없습니다. (제출자가 없거나 이미 지급 완료됨)`);
-      } else {
-        const codes = awardedUsers.map((u) => `${u.rank}위 ${u.userCode}(+${u.bonus}P)`).join(', ');
-        notify(`제 ${roundIdx + 1} 라운드 TOP 3 보너스(+50P) 지급 완료! (${codes})`);
-      }
+      const payload: Partial<AppSettings> = {
+        goldenBellRewards: {
+          first: Number(editableRewards.first) || 0,
+          second: Number(editableRewards.second) || 0,
+          third: Number(editableRewards.third) || 0,
+        },
+      };
+      onSettingsUpdated({ ...settings, ...payload });
+      playCorrectSound();
+      notify('골든벨 순위별 TOP 3 보너스 포인트 설정이 저장되었습니다!');
+
+      await updateDoc(doc(db, 'app_settings', 'config'), payload);
     } catch (err) {
-      console.error('Award bonus error:', err);
-      notify('보너스 지급 오류', 'error');
+      console.error('Save rewards error:', err);
+      notify('보너스 포인트 저장 오류', 'error');
     } finally {
       setLoadingAction(null);
     }
@@ -859,57 +859,158 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* TAB 1: GOLDEN BELL ROUNDS & SCHEDULE UNIFIED MANAGER */}
           {activeTab === 'status' && (
             <div className="space-y-6">
-              {/* Live status banner */}
+              {/* Live status & Global LIVE controller container */}
               <div className={`p-4 sm:p-5 rounded-2xl border transition-all ${
                 settings.roundStatus === 'in_progress'
-                  ? 'bg-emerald-50 border-emerald-300'
+                  ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20'
                   : 'bg-amber-50/70 border-amber-200'
-              } flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black shrink-0 ${
+              } flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs`}>
+                <div className="flex items-center gap-3.5">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black shrink-0 ${
                     settings.roundStatus === 'in_progress'
-                      ? 'bg-emerald-600 text-white animate-pulse'
+                      ? 'bg-emerald-600 text-white shadow-md'
                       : 'bg-amber-200 text-amber-900'
                   }`}>
                     {settings.roundStatus === 'in_progress' ? (
-                      <Play className="w-5 h-5 fill-white" />
+                      <Play className="w-6 h-6 fill-white" />
                     ) : (
-                      <Clock className="w-5 h-5" />
+                      <Clock className="w-6 h-6" />
                     )}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/80 border border-slate-200 text-slate-700">
+                      <span className="text-[11px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/90 border border-slate-200 text-slate-700">
                         실시간 운영 상태
                       </span>
-                      {settings.roundStatus === 'in_progress' && (
+                      {settings.roundStatus === 'in_progress' ? (
                         <span className="text-[11px] font-black text-emerald-700 animate-pulse flex items-center gap-1">
                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                           LIVE 진행 중
                         </span>
+                      ) : (
+                        <span className="text-[11px] font-bold text-amber-800">
+                          대기 중
+                        </span>
                       )}
                     </div>
                     <h4 className="text-base font-extrabold text-slate-900 mt-1">
-                      {settings.roundStatus === 'in_progress'
-                        ? `제 ${(settings.activeRound ?? 0) + 1} 라운드 LIVE 진행 중`
-                        : '대기 상태 (시간표에 맞춰 자동 진행되며, 아래에서 수동 제어도 가능합니다)'}
+                      {settings.roundStatus === 'in_progress' && settings.activeRound !== null
+                        ? `🔥 [제 ${(settings.activeRound ?? 0) + 1} 라운드] 시간표에 따라 LIVE 진행 중`
+                        : '현재 진행 중인 LIVE 라운드가 없습니다.'}
                     </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {settings.roundStatus === 'in_progress'
+                        ? '스케줄 운영시간이 종료되면 TOP 3에게 포인트가 자동 지급됩니다. 필요 시 아래 버튼으로 조기 종료할 수 있습니다.'
+                        : '등록된 시간표(스케줄)에 맞춰 자동으로 회차가 시작 및 종료됩니다.'}
+                    </p>
                   </div>
                 </div>
+
+                {/* Right side controls: Early Stop button when in progress */}
                 {settings.roundStatus === 'in_progress' && (
-                  <button
-                    type="button"
-                    onClick={() => handleEndRound(settings.activeRound ?? undefined)}
-                    disabled={loadingAction === 'end_round'}
-                    className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
-                  >
-                    <Square className="w-3.5 h-3.5 fill-white" />
-                    <span>{loadingAction === 'end_round' ? '종료 중...' : '현재 라운드 종료 & TOP 3(+50P) 지급'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 w-full md:w-auto">
+                    <button
+                      type="button"
+                      onClick={handleStopCurrentRound}
+                      disabled={loadingAction === 'stop_live'}
+                      className="w-full md:w-auto px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-2 cursor-pointer transition"
+                    >
+                      <Square className="w-4 h-4 fill-white" />
+                      <span>{loadingAction === 'stop_live' ? '종료 및 정산 중...' : '현재 라운드 조기 종료 (TOP 3 포인트 자동 지급)'}</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
-              {/* Unified Round Management: Start, Time Adjustment & Delete in ONE */}
+              {/* TOP 3 Bonus Points Setting Container */}
+              <div className="p-4 sm:p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-extrabold text-slate-900">
+                        골든벨 TOP 3 순위별 보너스 포인트 설정
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        운영시간 종료 또는 수동 종료 시 해당 회차 TOP 3 참가자에게 자동 부여됩니다.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveRewardTiers}
+                    disabled={loadingAction === 'save_rewards'}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{loadingAction === 'save_rewards' ? '저장 중...' : '포인트 설정 저장'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="flex items-center gap-2.5 bg-amber-50/60 border border-amber-200 rounded-xl p-3">
+                    <span className="w-7 h-7 rounded-lg bg-amber-500 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      1위
+                    </span>
+                    <div className="flex-1">
+                      <span className="text-[10px] font-bold text-amber-800 block">1위 보너스</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value={editableRewards.first}
+                          onChange={(e) => setEditableRewards({ ...editableRewards, first: Number(e.target.value) || 0 })}
+                          className="w-full bg-white border border-amber-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <span className="text-xs font-extrabold text-amber-800 shrink-0">P</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <span className="w-7 h-7 rounded-lg bg-slate-400 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      2위
+                    </span>
+                    <div className="flex-1">
+                      <span className="text-[10px] font-bold text-slate-600 block">2위 보너스</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value={editableRewards.second}
+                          onChange={(e) => setEditableRewards({ ...editableRewards, second: Number(e.target.value) || 0 })}
+                          className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        />
+                        <span className="text-xs font-extrabold text-slate-600 shrink-0">P</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 bg-amber-700/5 border border-amber-800/20 rounded-xl p-3">
+                    <span className="w-7 h-7 rounded-lg bg-amber-700 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      3위
+                    </span>
+                    <div className="flex-1">
+                      <span className="text-[10px] font-bold text-amber-900 block">3위 보너스</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value={editableRewards.third}
+                          onChange={(e) => setEditableRewards({ ...editableRewards, third: Number(e.target.value) || 0 })}
+                          className="w-full bg-white border border-amber-800/30 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-700"
+                        />
+                        <span className="text-xs font-extrabold text-amber-900 shrink-0">P</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Unified Round Management: Time Adjustment & Delete in ONE */}
               <div className="p-4 sm:p-5 bg-slate-50 border border-slate-200 rounded-3xl space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
                   <div>
@@ -921,7 +1022,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </span>
                     </h4>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      수동 시작, 운영시간 조정, TOP 3 보너스(+50P) 지급 및 회차 삭제를 통합하여 관리합니다.
+                      회차별 운영시간을 설정하고 관리합니다. 회차 운영시간이 끝나면 TOP 3에게 포인트가 자동 부여됩니다.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -1054,44 +1155,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </div>
                         </div>
 
-                        {/* 3. Control Actions (Vertically stacked: LIVE Button & TOP 3 Bonus, with Delete button) */}
-                        <div className="flex items-center gap-2.5 shrink-0 w-full md:w-auto justify-between md:justify-end pt-2 md:pt-0 border-t md:border-t-0 border-slate-200/80">
-                          <div className="flex flex-col gap-1.5 w-full md:w-44">
-                            {isLiveActive ? (
-                              <button
-                                type="button"
-                                onClick={() => handleEndRound(idx)}
-                                disabled={loadingAction === 'end_round'}
-                                className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-98 text-white text-xs font-extrabold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                                title="라운드를 종료하고 TOP 3 참가자에게 +50P를 바로 지급합니다"
-                              >
-                                <Square className="w-3.5 h-3.5 fill-white" />
-                                <span>{loadingAction === 'end_round' ? '종료 중...' : 'LIVE 종료 & TOP3(+50P)'}</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleStartRound(idx)}
-                                disabled={loadingAction === `start_r_${idx}`}
-                                className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white text-xs font-extrabold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                              >
-                                <Play className="w-3.5 h-3.5 fill-white" />
-                                <span>{loadingAction === `start_r_${idx}` ? '시작 중...' : 'LIVE 수동 시작'}</span>
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleAwardTop3(idx)}
-                              disabled={loadingAction === `award_r_${idx}`}
-                              className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-white text-xs font-extrabold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                              title="해당 회차 TOP 3 참가자에게 +50P 보너스를 즉시 지급합니다"
-                            >
-                              <Award className="w-3.5 h-3.5" />
-                              <span>{loadingAction === `award_r_${idx}` ? '지급 중...' : 'TOP3(+50P) 보너스'}</span>
-                            </button>
-                          </div>
-
+                        {/* 3. Delete Action */}
+                        <div className="flex items-center gap-2 shrink-0 justify-end">
                           <button
                             type="button"
                             onClick={() => handleDeleteRound(idx)}

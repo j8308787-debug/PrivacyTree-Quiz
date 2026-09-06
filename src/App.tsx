@@ -23,7 +23,7 @@ import {
   calculateTreeLevel,
   awardGoldenBellRoundBonuses,
 } from './lib/dataService';
-import { normalizeSchedule } from './lib/scheduleUtils';
+import { normalizeSchedule, getTodayDateString } from './lib/scheduleUtils';
 import { collection, doc, onSnapshot, query, orderBy, updateDoc } from 'firebase/firestore';
 import { Header } from './components/Header';
 import { LoginModal } from './components/LoginModal';
@@ -127,13 +127,10 @@ export default function App() {
           const newSettings = { ...DEFAULT_APP_SETTINGS, ...data } as AppSettings;
           setSettings(newSettings);
 
-          // If admin triggered participant reset after participant's current session started
-          if (
-            newSettings.lastResetUsersAt &&
-            newSettings.lastResetUsersAt > sessionStartTimeRef.current &&
-            currentUserRef.current
-          ) {
-            forceParticipantLogout('관리자에 의해 참여자 데이터가 초기화되어 로그아웃되었습니다.');
+          // If admin triggered participant reset or system reset after participant's current session started
+          const lastReset = Math.max(newSettings.lastResetUsersAt || 0, newSettings.lastResetSystemAt || 0);
+          if (lastReset > sessionStartTimeRef.current && currentUserRef.current) {
+            forceParticipantLogout('관리자에 의해 시스템 또는 참여자 데이터가 초기화되어 로그아웃되었습니다.');
           }
         }
       });
@@ -219,15 +216,17 @@ export default function App() {
     };
   }, []);
 
-  // Periodic check: Auto-award Top 3 +50P bonus when a Golden Bell round concludes
+  // Periodic check: Auto-manage schedule live rounds & Top 3 bonus points
   useEffect(() => {
-    const checkScheduleAndEndRound = async () => {
+    const checkScheduleAndManageRounds = async () => {
       if (!settings.goldenBellSchedule) return;
       const schedule = normalizeSchedule(settings.goldenBellSchedule);
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const rewards = settings.goldenBellRewards || { first: 50, second: 50, third: 50 };
+      const todayStr = getTodayDateString();
 
-      // 1. If active LIVE round has reached its scheduled endTime
+      // 1. Check if an active round has reached its scheduled endTime
       if (
         settings.roundStatus === 'in_progress' &&
         settings.activeRound !== null &&
@@ -246,11 +245,11 @@ export default function App() {
               });
               const { awardedUsers } = await awardGoldenBellRoundBonuses(
                 activeIdx,
-                { first: 50, second: 50, third: 50 },
+                rewards,
                 settings.treeLevels || DEFAULT_TREE_LEVELS
               );
               if (awardedUsers.length > 0) {
-                showToast(`제 ${activeIdx + 1} 라운드 종료! TOP 3 참가자에게 보너스 +50P 지급 완료`, 'success');
+                showToast(`제 ${activeIdx + 1} 라운드 운영시간 종료! TOP 3 참가자에게 보너스 포인트가 자동 지급되었습니다.`, 'success');
               }
             } catch (e) {
               console.error('Auto end round error:', e);
@@ -259,20 +258,59 @@ export default function App() {
         }
       }
 
-      // 2. Award any un-awarded Top 3 bonus for past ended rounds
+      // 2. Check if a scheduled round should be automatically LIVE right now
+      let foundActiveIdx = -1;
+      for (let i = 0; i < schedule.length; i++) {
+        const item = schedule[i];
+        const [startH, startM] = item.startTime.split(':').map(Number);
+        const startMinutes = (startH || 0) * 60 + (startM || 0);
+        const [endH, endM] = item.endTime.split(':').map(Number);
+        const endMinutes = (endH || 0) * 60 + (endM || 0);
+        const isForceStopped = settings.forceStoppedRounds?.[`${todayStr}_r${i}`] ?? false;
+
+        if (currentMinutes >= startMinutes && currentMinutes < endMinutes && !isForceStopped) {
+          foundActiveIdx = i;
+          break;
+        }
+      }
+
+      // If a scheduled round is in its window but not active in DB, activate it
+      if (foundActiveIdx !== -1 && (settings.roundStatus !== 'in_progress' || settings.activeRound !== foundActiveIdx)) {
+        try {
+          await updateDoc(doc(db, 'app_settings', 'config'), {
+            roundStatus: 'in_progress',
+            activeRound: foundActiveIdx,
+            roundStartTime: Date.now(),
+          });
+        } catch (e) {
+          console.error('Auto start round error:', e);
+        }
+      } else if (foundActiveIdx === -1 && settings.roundStatus === 'in_progress') {
+        // No scheduled round is active right now
+        try {
+          await updateDoc(doc(db, 'app_settings', 'config'), {
+            roundStatus: 'ended',
+            activeRound: null,
+          });
+        } catch (e) {
+          console.error('Auto reset round status error:', e);
+        }
+      }
+
+      // 3. Award any un-awarded Top 3 bonus for past ended scheduled rounds
       for (let i = 0; i < schedule.length; i++) {
         const item = schedule[i];
         const [endH, endM] = item.endTime.split(':').map(Number);
         const endMinutes = (endH || 0) * 60 + (endM || 0);
-        if (currentMinutes > endMinutes) {
+        if (currentMinutes >= endMinutes) {
           try {
             const { awardedUsers } = await awardGoldenBellRoundBonuses(
               i,
-              { first: 50, second: 50, third: 50 },
+              rewards,
               settings.treeLevels || DEFAULT_TREE_LEVELS
             );
             if (awardedUsers.length > 0) {
-              showToast(`제 ${i + 1} 라운드 종료! TOP 3 참가자에게 보너스 +50P 지급 완료`, 'success');
+              showToast(`제 ${i + 1} 라운드 TOP 3 참가자에게 보너스 포인트가 자동 지급되었습니다.`, 'success');
             }
           } catch (e) {
             // silent catch
@@ -281,7 +319,7 @@ export default function App() {
       }
     };
 
-    const interval = setInterval(checkScheduleAndEndRound, 20000);
+    const interval = setInterval(checkScheduleAndManageRounds, 10000);
     return () => clearInterval(interval);
   }, [settings]);
 

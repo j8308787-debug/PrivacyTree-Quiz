@@ -1,4 +1,22 @@
-import { GoldenBellScheduleItem } from '../types';
+import { GoldenBellScheduleItem, UserProfile } from '../types';
+
+export function getTodayDateString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const date = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${date}`;
+}
+
+export function isRoundPlayedToday(user: UserProfile | null | undefined, roundIndex: number): boolean {
+  if (!user) return false;
+  const today = getTodayDateString();
+  if (user.goldenBellPlayDate !== today) {
+    // If play date is not today, the user can play any round today
+    return false;
+  }
+  return user.goldenBellRoundsPlayed?.includes(roundIndex) ?? false;
+}
 
 export function normalizeSchedule(schedule: (GoldenBellScheduleItem | string)[] | undefined): GoldenBellScheduleItem[] {
   if (schedule && Array.isArray(schedule)) {
@@ -35,17 +53,33 @@ export function normalizeSchedule(schedule: (GoldenBellScheduleItem | string)[] 
   ];
 }
 
+export function isScheduleWithinTimeWindow(scheduleItem: GoldenBellScheduleItem): boolean {
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const [startH, startM] = scheduleItem.startTime.split(':').map(Number);
+  const startMinutes = (startH || 0) * 60 + (startM || 0);
+
+  const [endH, endM] = scheduleItem.endTime.split(':').map(Number);
+  const endMinutes = (endH || 0) * 60 + (endM || 0);
+
+  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+}
+
 export function getRoundTimeStatus(
   scheduleItem: GoldenBellScheduleItem,
   adminForcedStatus?: 'idle' | 'countdown' | 'in_progress' | 'ended',
-  adminActiveRound?: number | null
+  adminActiveRound?: number | null,
+  forceStopped?: boolean
 ): 'active' | 'upcoming' | 'ended' {
-  // If admin manually set round status
-  if (adminForcedStatus === 'in_progress' && adminActiveRound === scheduleItem.round - 1) {
-    return 'active';
+  // If this round was explicitly force-stopped by admin
+  if (forceStopped) {
+    return 'ended';
   }
-  if (adminForcedStatus === 'countdown' && adminActiveRound === scheduleItem.round - 1) {
-    return 'active';
+
+  // If admin manually ended this round
+  if (adminForcedStatus === 'ended' && adminActiveRound === scheduleItem.round - 1) {
+    return 'ended';
   }
 
   const now = new Date();
@@ -65,3 +99,4 @@ export function getRoundTimeStatus(
     return 'ended';
   }
 }
+

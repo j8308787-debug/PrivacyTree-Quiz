@@ -16,6 +16,7 @@ import {
   GoldenBellSubmission,
   TreeLevelConfig,
 } from '../types';
+import { getTodayDateString } from './scheduleUtils';
 
 export function calculateTreeLevel(points: number, treeLevels: TreeLevelConfig[]): number {
   if (!treeLevels || treeLevels.length === 0) return 1;
@@ -252,22 +253,26 @@ export async function submitGoldenBellAnswers(
   user: UserProfile,
   roundIndex: number,
   answers: { questionId: string; selectedOption: number; isCorrect: boolean; timeMs: number }[],
-  treeLevels: TreeLevelConfig[]
+  treeLevels: TreeLevelConfig[],
+  roundName?: string
 ): Promise<{ submission: GoldenBellSubmission; updatedUser: UserProfile; correctCount: number; totalTimeMs: number }> {
   const correctCount = answers.filter((a) => a.isCorrect).length;
   const totalTimeMs = answers.reduce((acc, curr) => acc + curr.timeMs, 0);
+  const today = getTodayDateString();
 
-  const submissionId = `sub_r${roundIndex}_${user.id}`;
+  const submissionId = `sub_${today}_r${roundIndex}_${user.id}`;
   const subRef = doc(db, 'golden_bell_submissions', submissionId);
 
   const submission: GoldenBellSubmission = {
     id: submissionId,
     roundIndex,
+    roundName: roundName || `제 ${roundIndex + 1} 라운드`,
     userId: user.id,
     userCode: user.code,
     correctCount,
     totalTimeMs,
     submittedAt: Date.now(),
+    date: today,
     bonusAwarded: false,
     answers,
   };
@@ -278,13 +283,19 @@ export async function submitGoldenBellAnswers(
   const baseEarned = correctCount * 10 + 5;
   const newPoints = (user.points || 0) + baseEarned;
   const newLevel = calculateTreeLevel(newPoints, treeLevels);
-  const playedRounds = user.goldenBellRoundsPlayed || [];
+
+  // If user's last play date is not today, start clean with today's rounds
+  const userPlayedToday = user.goldenBellPlayDate === today ? (user.goldenBellRoundsPlayed || []) : [];
+  const newPlayedRounds = userPlayedToday.includes(roundIndex)
+    ? userPlayedToday
+    : [...userPlayedToday, roundIndex];
 
   const userRef = doc(db, 'users', user.id);
   const userPayload: Partial<UserProfile> = {
     points: newPoints,
     treeLevel: newLevel,
-    goldenBellRoundsPlayed: playedRounds.includes(roundIndex) ? playedRounds : [...playedRounds, roundIndex],
+    goldenBellPlayDate: today,
+    goldenBellRoundsPlayed: newPlayedRounds,
     lastActive: Date.now(),
   };
 
@@ -298,12 +309,14 @@ export async function submitGoldenBellAnswers(
   };
 }
 
-// Calculate & Award Top 3 Round Bonuses (+50P each)
+// Calculate & Award Top 3 Round Bonuses (Configurable 1st~3rd rank points)
 export async function awardGoldenBellRoundBonuses(
   roundIndex: number,
-  rewards: { first: number; second: number; third: number } = { first: 50, second: 50, third: 50 },
-  treeLevels: TreeLevelConfig[]
+  rewards: { first: number; second: number; third: number } = { first: 50, second: 30, third: 20 },
+  treeLevels: TreeLevelConfig[],
+  targetDate?: string
 ): Promise<{ awardedUsers: { userCode: string; rank: number; bonus: number }[] }> {
+  const filterDate = targetDate || getTodayDateString();
   const submissionsSnap = await getDocs(
     query(
       collection(db, 'golden_bell_submissions'),
@@ -311,7 +324,10 @@ export async function awardGoldenBellRoundBonuses(
     )
   );
 
-  const submissions = submissionsSnap.docs.map((d) => d.data() as GoldenBellSubmission);
+  let submissions = submissionsSnap.docs.map((d) => d.data() as GoldenBellSubmission);
+
+  // Filter by target date if date is present on submissions
+  submissions = submissions.filter((s) => !s.date || s.date === filterDate);
 
   // Sort by correctCount DESC, then totalTimeMs ASC
   submissions.sort((a, b) => {
@@ -321,7 +337,7 @@ export async function awardGoldenBellRoundBonuses(
     return a.totalTimeMs - b.totalTimeMs;
   });
 
-  const bonusTiers = [rewards.first, rewards.second, rewards.third];
+  const bonusTiers = [rewards.first ?? 50, rewards.second ?? 30, rewards.third ?? 20];
   const awardedUsers: { userCode: string; rank: number; bonus: number }[] = [];
 
   for (let i = 0; i < Math.min(3, submissions.length); i++) {

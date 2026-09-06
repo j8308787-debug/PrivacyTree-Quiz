@@ -140,7 +140,7 @@ export async function exportAllDataToExcel(
   const hh = String(now.getHours()).padStart(2, '0');
   const min = String(now.getMinutes()).padStart(2, '0');
   const ss = String(now.getSeconds()).padStart(2, '0');
-  const fileName = `개인정보보호_나무_참여현황_${yyyy}${mm}${dd}_${hh}${min}${ss}.xlsx`;
+  const fileName = `개인정보보호_약속나무_참여현황_${yyyy}${mm}${dd}_${hh}${min}${ss}.xlsx`;
 
   XLSX.writeFile(wb, fileName);
   return fileName;
