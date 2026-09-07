@@ -285,7 +285,7 @@ export const GoldenBellModal: React.FC<GoldenBellModalProps> = ({
 
     const correctCount = allAnswers.filter((a) => a.isCorrect).length;
     const totalTimeMs = allAnswers.reduce((acc, curr) => acc + curr.timeMs, 0);
-    const earned = correctCount * 10 + 5;
+    const earned = correctCount * 3; // 1문제당 3P (5문제 모두 정답 시 15P)
     setLastSubmissionResult({
       correctCount,
       totalTimeMs,

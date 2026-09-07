@@ -36,6 +36,7 @@ import { HallOfFameModal } from './components/HallOfFameModal';
 import { AdminModal } from './components/AdminModal';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 import { LevelUpModal } from './components/LevelUpModal';
+import { GameGuideModal } from './components/GameGuideModal';
 import {
   Droplet,
   Trophy,
@@ -63,6 +64,7 @@ export default function App() {
   const [isHallOfFameOpen, setIsHallOfFameOpen] = useState(false);
   const [isAdminPasswordOpen, setIsAdminPasswordOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isGameGuideOpen, setIsGameGuideOpen] = useState(false);
   const [levelUpLevel, setLevelUpLevel] = useState<TreeLevelConfig | null>(null);
 
   // Refs for real-time listener synchronization without stale closure
@@ -223,7 +225,9 @@ export default function App() {
       const schedule = normalizeSchedule(settings.goldenBellSchedule);
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const rewards = settings.goldenBellRewards || { first: 50, second: 50, third: 50 };
+      const getRewardsForRound = (rIdx: number) => {
+        return settings.roundRewards?.[rIdx] || settings.goldenBellRewards || { first: 50, second: 30, third: 20 };
+      };
       const todayStr = getTodayDateString();
 
       // 1. Check if an active round has reached its scheduled endTime
@@ -245,7 +249,7 @@ export default function App() {
               });
               const { awardedUsers } = await awardGoldenBellRoundBonuses(
                 activeIdx,
-                rewards,
+                getRewardsForRound(activeIdx),
                 settings.treeLevels || DEFAULT_TREE_LEVELS
               );
               if (awardedUsers.length > 0) {
@@ -306,7 +310,7 @@ export default function App() {
           try {
             const { awardedUsers } = await awardGoldenBellRoundBonuses(
               i,
-              rewards,
+              getRewardsForRound(i),
               settings.treeLevels || DEFAULT_TREE_LEVELS
             );
             if (awardedUsers.length > 0) {
@@ -458,6 +462,7 @@ export default function App() {
         onOpenGoldenBell={() => setIsGoldenBellOpen(true)}
         onOpenAdmin={handleRequestAdminOpen}
         onOpenHallOfFame={() => setIsHallOfFameOpen(true)}
+        onOpenGameGuide={() => setIsGameGuideOpen(true)}
         onLogout={handleLogout}
         soundActive={soundActive}
         setSoundActive={setSoundActive}
@@ -627,6 +632,7 @@ export default function App() {
         user={currentUser}
         quizzes={oxQuizzes}
         onQuizCompleted={(updatedUser, drops) => {
+          currentUserRef.current = updatedUser;
           setCurrentUser(updatedUser);
           if (drops > 0) {
             showToast(`정답! 물방울 +${drops}개 획득.`, 'success');
@@ -681,6 +687,11 @@ export default function App() {
         onSettingsUpdated={(newSettings) => setSettings(newSettings)}
         onResetParticipants={() => forceParticipantLogout('참여자 데이터가 초기화되어 로그아웃되었습니다.')}
         onResetAll={() => forceParticipantLogout('전체 시스템 데이터가 초기화되어 로그아웃되었습니다.')}
+      />
+
+      <GameGuideModal
+        isOpen={isGameGuideOpen}
+        onClose={() => setIsGameGuideOpen(false)}
       />
 
       {levelUpLevel && (

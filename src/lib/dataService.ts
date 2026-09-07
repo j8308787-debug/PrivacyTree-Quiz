@@ -219,33 +219,48 @@ export async function toggleLikePledge(pledgeId: string, userId: string): Promis
   });
 }
 
-// OX Quiz completion
+// OX Quiz completion (Atomic transaction to guarantee waterDrop increments)
 export async function completeOxQuizQuestion(
-  user: UserProfile,
+  userId: string,
   quizId: string,
   isCorrect: boolean,
   rewardDrops: number = 1
 ): Promise<{ updatedUser: UserProfile; dropsEarned: number }> {
-  const userRef = doc(db, 'users', user.id);
-  const completed = user.completedOxIds || [];
-  const alreadyCompleted = completed.includes(quizId);
-
-  let dropsEarned = 0;
-  if (isCorrect && !alreadyCompleted) {
-    dropsEarned = rewardDrops;
-  }
-
-  const updatedPayload: Partial<UserProfile> = {
-    waterDrops: (user.waterDrops || 0) + dropsEarned,
-    completedOxIds: alreadyCompleted ? completed : [...completed, quizId],
-    lastActive: Date.now(),
+  const userRef = doc(db, 'users', userId);
+  let result = {
+    updatedUser: {} as UserProfile,
+    dropsEarned: 0,
   };
 
-  await updateDoc(userRef, updatedPayload);
-  return {
-    updatedUser: { ...user, ...updatedPayload },
-    dropsEarned,
-  };
+  await runTransaction(db, async (transaction) => {
+    const userDoc = await transaction.get(userRef);
+    if (!userDoc.exists()) throw new Error('참여자를 찾을 수 없습니다.');
+    const data = userDoc.data() as UserProfile;
+    const completed = data.completedOxIds || [];
+    const alreadyCompleted = completed.includes(quizId);
+
+    let dropsEarned = 0;
+    if (isCorrect && !alreadyCompleted) {
+      dropsEarned = rewardDrops;
+    }
+
+    const newCompleted = alreadyCompleted ? completed : [...completed, quizId];
+    const newDrops = (data.waterDrops || 0) + dropsEarned;
+
+    const payload: Partial<UserProfile> = {
+      waterDrops: newDrops,
+      completedOxIds: newCompleted,
+      lastActive: Date.now(),
+    };
+
+    transaction.update(userRef, payload);
+    result = {
+      updatedUser: { ...data, ...payload },
+      dropsEarned,
+    };
+  });
+
+  return result;
 }
 
 // Golden Bell Submission
@@ -279,8 +294,8 @@ export async function submitGoldenBellAnswers(
 
   await setDoc(subRef, submission);
 
-  // Give base participation points: 10 points per correct question + 5 base
-  const baseEarned = correctCount * 10 + 5;
+  // Give base participation points: 3 points per correct question (15 points for all 5 correct)
+  const baseEarned = correctCount * 3;
   const newPoints = (user.points || 0) + baseEarned;
   const newLevel = calculateTreeLevel(newPoints, treeLevels);
 
@@ -314,7 +329,8 @@ export async function awardGoldenBellRoundBonuses(
   roundIndex: number,
   rewards: { first: number; second: number; third: number } = { first: 50, second: 30, third: 20 },
   treeLevels: TreeLevelConfig[],
-  targetDate?: string
+  targetDate?: string,
+  forceReaward: boolean = false
 ): Promise<{ awardedUsers: { userCode: string; rank: number; bonus: number }[] }> {
   const filterDate = targetDate || getTodayDateString();
   const submissionsSnap = await getDocs(
@@ -343,7 +359,7 @@ export async function awardGoldenBellRoundBonuses(
   for (let i = 0; i < Math.min(3, submissions.length); i++) {
     const sub = submissions[i];
     const bonus = bonusTiers[i];
-    if (!sub.bonusAwarded && bonus > 0) {
+    if ((!sub.bonusAwarded || forceReaward) && bonus > 0) {
       const userRef = doc(db, 'users', sub.userId);
       const userDoc = await getDoc(userRef);
       if (userDoc.exists()) {

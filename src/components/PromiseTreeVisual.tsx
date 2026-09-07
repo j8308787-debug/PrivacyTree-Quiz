@@ -271,16 +271,20 @@ export const PromiseTreeVisual: React.FC<PromiseTreeVisualProps> = ({
         >
           <Droplet className={`w-4 h-4 flex-shrink-0 ${user && user.waterDrops > 0 ? 'fill-white' : 'fill-slate-400'}`} />
           {isWateringLoading ? (
-            <span>물주는 중...</span>
+            <span className="whitespace-nowrap">물주는 중...</span>
           ) : user && user.waterDrops > 0 ? (
-            <div className="flex flex-col sm:flex-row items-center justify-center leading-tight">
-              <span>나무에 물주기</span>
-              <span className="text-[10px] sm:text-xs opacity-90 sm:ml-1 font-semibold">({user.waterDrops}개 보유)</span>
+            <div className="flex flex-col items-center justify-center leading-tight text-center">
+              <span className="whitespace-nowrap">나무에 물주기</span>
+              <span className="text-[10px] sm:text-[11px] opacity-90 font-semibold mt-0.5 whitespace-nowrap">
+                (+10P, {user.waterDrops}개 보유)
+              </span>
             </div>
           ) : (
-            <div className="flex flex-col sm:flex-row items-center justify-center leading-tight">
-              <span>나무에 물주기</span>
-              <span className="text-[10px] sm:text-xs text-slate-400 font-semibold sm:ml-1">(0개)</span>
+            <div className="flex flex-col items-center justify-center leading-tight text-center">
+              <span className="whitespace-nowrap">나무에 물주기</span>
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-semibold mt-0.5 whitespace-nowrap">
+                (+10P, 0개 보유)
+              </span>
             </div>
           )}
         </button>

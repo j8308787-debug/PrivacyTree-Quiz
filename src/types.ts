@@ -30,6 +30,13 @@ export interface AppSettings {
     second: number;
     third: number;
   };
+  roundRewards?: {
+    [roundIndex: number]: {
+      first: number;
+      second: number;
+      third: number;
+    };
+  };
   adminPassword?: string;
   oxRewardDrops: number;
   wateringRewardPoints: number;

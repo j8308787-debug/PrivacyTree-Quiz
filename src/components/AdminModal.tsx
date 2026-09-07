@@ -111,6 +111,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     second: settings.goldenBellRewards?.second ?? 50,
     third: settings.goldenBellRewards?.third ?? 50,
   });
+  const [selectedRewardRound, setSelectedRewardRound] = useState<number | 'all'>('all');
+  const [editableRoundRewards, setEditableRoundRewards] = useState<{
+    [roundIndex: number]: { first: number; second: number; third: number };
+  }>(settings.roundRewards || {});
 
   // Admin password state
   const [newAdminPassword, setNewAdminPassword] = useState(settings.adminPassword || 'admin');
@@ -143,6 +147,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         second: settings.goldenBellRewards?.second ?? 50,
         third: settings.goldenBellRewards?.third ?? 50,
       });
+      setEditableRoundRewards(settings.roundRewards || {});
       setNewPresetInput('');
       setEditingPresetIdx(null);
       setEditingPresetText('');
@@ -289,7 +294,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       await updateDoc(doc(db, 'app_settings', 'config'), payload);
 
       // Automatically award configured TOP 3 points
-      const rewards = settings.goldenBellRewards || editableRewards || { first: 50, second: 50, third: 50 };
+      const rewards = settings.roundRewards?.[activeIdx] || editableRoundRewards[activeIdx] || settings.goldenBellRewards || editableRewards || { first: 50, second: 30, third: 20 };
       const { awardedUsers } = await awardGoldenBellRoundBonuses(
         activeIdx,
         rewards,
@@ -314,21 +319,72 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setLoadingAction('save_rewards');
     playClickSound();
     try {
-      const payload: Partial<AppSettings> = {
-        goldenBellRewards: {
-          first: Number(editableRewards.first) || 0,
-          second: Number(editableRewards.second) || 0,
-          third: Number(editableRewards.third) || 0,
-        },
-      };
+      let payload: Partial<AppSettings>;
+      if (selectedRewardRound === 'all') {
+        payload = {
+          goldenBellRewards: {
+            first: Number(editableRewards.first) || 0,
+            second: Number(editableRewards.second) || 0,
+            third: Number(editableRewards.third) || 0,
+          },
+          roundRewards: editableRoundRewards,
+        };
+      } else {
+        const roundVal = editableRoundRewards[selectedRewardRound] || editableRewards;
+        const updatedRoundRewards = {
+          ...editableRoundRewards,
+          [selectedRewardRound]: {
+            first: Number(roundVal.first) || 0,
+            second: Number(roundVal.second) || 0,
+            third: Number(roundVal.third) || 0,
+          },
+        };
+        setEditableRoundRewards(updatedRoundRewards);
+        payload = {
+          roundRewards: updatedRoundRewards,
+        };
+      }
       onSettingsUpdated({ ...settings, ...payload });
       playCorrectSound();
-      notify('골든벨 순위별 TOP 3 보너스 포인트 설정이 저장되었습니다!');
+      notify(
+        selectedRewardRound === 'all'
+          ? '전체 기본 TOP 3 보너스 포인트 설정이 저장되었습니다!'
+          : `제 ${selectedRewardRound + 1} 라운드 TOP 3 보너스 포인트 설정이 저장되었습니다!`
+      );
 
       await updateDoc(doc(db, 'app_settings', 'config'), payload);
     } catch (err) {
       console.error('Save rewards error:', err);
       notify('보너스 포인트 저장 오류', 'error');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Manually award TOP 3 bonus points to a specific round immediately
+  const handleManualAwardTop3 = async (roundIdx: number) => {
+    const targetRoundNum = roundIdx + 1;
+    const targetRewards = editableRoundRewards[roundIdx] || settings.roundRewards?.[roundIdx] || editableRewards;
+    setLoadingAction(`manual_award_${roundIdx}`);
+    playClickSound();
+    try {
+      const { awardedUsers } = await awardGoldenBellRoundBonuses(
+        roundIdx,
+        targetRewards,
+        settings.treeLevels,
+        undefined,
+        true // force award even if previously marked
+      );
+      if (awardedUsers.length > 0) {
+        const codes = awardedUsers.map((u) => `${u.rank}위 ${u.userCode}(+${u.bonus}P)`).join(', ');
+        playCorrectSound();
+        notify(`제 ${targetRoundNum} 라운드 TOP 3에게 추가 포인트가 수동 부여되었습니다! (${codes})`);
+      } else {
+        notify(`제 ${targetRoundNum} 라운드에 참여한 참가자가 없습니다.`, 'error');
+      }
+    } catch (err) {
+      console.error('Manual award error:', err);
+      notify('추가 포인트 부여 중 오류가 발생했습니다.', 'error');
     } finally {
       setLoadingAction(null);
     }
@@ -922,92 +978,206 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 )}
               </div>
 
-              {/* TOP 3 Bonus Points Setting Container */}
-              <div className="p-4 sm:p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+              {/* TOP 3 Bonus Points Setting Container (Per-round & Manual Award support) */}
+              <div className="p-4 sm:p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-2">
                     <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
                     <div>
-                      <h4 className="text-xs font-extrabold text-slate-900">
-                        골든벨 TOP 3 순위별 보너스 포인트 설정
+                      <h4 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                        <span>골든벨 TOP 3 라운드별 추가 포인트 설정 & 수동 부여</span>
+                        <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded">
+                          1위~3위 차등
+                        </span>
                       </h4>
-                      <p className="text-[11px] text-slate-400">
-                        운영시간 종료 또는 수동 종료 시 해당 회차 TOP 3 참가자에게 자동 부여됩니다.
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        각 회차 종료 시 설정된 순위별 추가 포인트가 자동 부여되며, 관리자가 언제든 즉시 수동 부여할 수도 있습니다.
                       </p>
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {typeof selectedRewardRound === 'number' && (
+                      <button
+                        type="button"
+                        onClick={() => handleManualAwardTop3(selectedRewardRound)}
+                        disabled={loadingAction === `manual_award_${selectedRewardRound}`}
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1 cursor-pointer shadow-xs"
+                        title="해당 라운드의 1~3위 참여자에게 지금 즉시 추가 포인트를 지급합니다."
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>
+                          {loadingAction === `manual_award_${selectedRewardRound}`
+                            ? '부여 중...'
+                            : `제 ${selectedRewardRound + 1}R TOP 3 즉시 부여`}
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSaveRewardTiers}
+                      disabled={loadingAction === 'save_rewards'}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{loadingAction === 'save_rewards' ? '저장 중...' : '포인트 설정 저장'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Round Selector Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                   <button
                     type="button"
-                    onClick={handleSaveRewardTiers}
-                    disabled={loadingAction === 'save_rewards'}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+                    onClick={() => setSelectedRewardRound('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                      selectedRewardRound === 'all'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                   >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{loadingAction === 'save_rewards' ? '저장 중...' : '포인트 설정 저장'}</span>
+                    ⭐ 전체 공통 기본값
                   </button>
+                  {editableSchedule.map((item, idx) => {
+                    const isSelected = selectedRewardRound === idx;
+                    const hasCustom = !!editableRoundRewards[idx];
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRewardRound(idx);
+                          // If not customized yet, initialize with common values
+                          if (!editableRoundRewards[idx]) {
+                            setEditableRoundRewards({
+                              ...editableRoundRewards,
+                              [idx]: {
+                                first: editableRewards.first,
+                                second: editableRewards.second,
+                                third: editableRewards.third,
+                              },
+                            });
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : hasCustom
+                            ? 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <span>제 {item.round || idx + 1} 라운드</span>
+                        {hasCustom && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600 inline-block" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="flex items-center gap-2.5 bg-amber-50/60 border border-amber-200 rounded-xl p-3">
-                    <span className="w-7 h-7 rounded-lg bg-amber-500 text-white font-black text-xs flex items-center justify-center shrink-0">
-                      1위
-                    </span>
-                    <div className="flex-1">
-                      <span className="text-[10px] font-bold text-amber-800 block">1위 보너스</span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <input
-                          type="number"
-                          min="0"
-                          step="10"
-                          value={editableRewards.first}
-                          onChange={(e) => setEditableRewards({ ...editableRewards, first: Number(e.target.value) || 0 })}
-                          className="w-full bg-white border border-amber-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                        />
-                        <span className="text-xs font-extrabold text-amber-800 shrink-0">P</span>
-                      </div>
-                    </div>
-                  </div>
+                {/* Tier Inputs for current selection */}
+                {(() => {
+                  const currentVals =
+                    selectedRewardRound === 'all'
+                      ? editableRewards
+                      : editableRoundRewards[selectedRewardRound] || editableRewards;
 
-                  <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                    <span className="w-7 h-7 rounded-lg bg-slate-400 text-white font-black text-xs flex items-center justify-center shrink-0">
-                      2위
-                    </span>
-                    <div className="flex-1">
-                      <span className="text-[10px] font-bold text-slate-600 block">2위 보너스</span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <input
-                          type="number"
-                          min="0"
-                          step="10"
-                          value={editableRewards.second}
-                          onChange={(e) => setEditableRewards({ ...editableRewards, second: Number(e.target.value) || 0 })}
-                          className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-500"
-                        />
-                        <span className="text-xs font-extrabold text-slate-600 shrink-0">P</span>
-                      </div>
-                    </div>
-                  </div>
+                  const updateTier = (tier: 'first' | 'second' | 'third', val: number) => {
+                    if (selectedRewardRound === 'all') {
+                      setEditableRewards({ ...editableRewards, [tier]: val });
+                    } else {
+                      const updated = {
+                        ...editableRoundRewards,
+                        [selectedRewardRound]: {
+                          first: currentVals.first,
+                          second: currentVals.second,
+                          third: currentVals.third,
+                          [tier]: val,
+                        },
+                      };
+                      setEditableRoundRewards(updated);
+                    }
+                  };
 
-                  <div className="flex items-center gap-2.5 bg-amber-700/5 border border-amber-800/20 rounded-xl p-3">
-                    <span className="w-7 h-7 rounded-lg bg-amber-700 text-white font-black text-xs flex items-center justify-center shrink-0">
-                      3위
-                    </span>
-                    <div className="flex-1">
-                      <span className="text-[10px] font-bold text-amber-900 block">3위 보너스</span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <input
-                          type="number"
-                          min="0"
-                          step="10"
-                          value={editableRewards.third}
-                          onChange={(e) => setEditableRewards({ ...editableRewards, third: Number(e.target.value) || 0 })}
-                          className="w-full bg-white border border-amber-800/30 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-700"
-                        />
-                        <span className="text-xs font-extrabold text-amber-900 shrink-0">P</span>
+                  return (
+                    <div>
+                      <div className="text-[11px] font-bold text-slate-500 mb-2 flex items-center justify-between">
+                        <span>
+                          {selectedRewardRound === 'all'
+                            ? '👉 전체 회차 기본 보너스 포인트 (개별 설정되지 않은 라운드에 적용)'
+                            : `👉 [제 ${Number(selectedRewardRound) + 1} 라운드] 개별 추가 포인트 설정`}
+                        </span>
+                        {selectedRewardRound !== 'all' && (
+                          <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                            이 라운드만의 특별 포인트 적용 중
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="flex items-center gap-2.5 bg-amber-50/70 border border-amber-200 rounded-xl p-3">
+                          <span className="w-7 h-7 rounded-lg bg-amber-500 text-white font-black text-xs flex items-center justify-center shrink-0">
+                            1위
+                          </span>
+                          <div className="flex-1">
+                            <span className="text-[10px] font-bold text-amber-800 block">1위 추가 포인트</span>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="5"
+                                value={currentVals.first}
+                                onChange={(e) => updateTier('first', Number(e.target.value) || 0)}
+                                className="w-full bg-white border border-amber-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              />
+                              <span className="text-xs font-extrabold text-amber-800 shrink-0">P</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                          <span className="w-7 h-7 rounded-lg bg-slate-400 text-white font-black text-xs flex items-center justify-center shrink-0">
+                            2위
+                          </span>
+                          <div className="flex-1">
+                            <span className="text-[10px] font-bold text-slate-600 block">2위 추가 포인트</span>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="5"
+                                value={currentVals.second}
+                                onChange={(e) => updateTier('second', Number(e.target.value) || 0)}
+                                className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                              />
+                              <span className="text-xs font-extrabold text-slate-600 shrink-0">P</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 bg-amber-700/5 border border-amber-800/20 rounded-xl p-3">
+                          <span className="w-7 h-7 rounded-lg bg-amber-700 text-white font-black text-xs flex items-center justify-center shrink-0">
+                            3위
+                          </span>
+                          <div className="flex-1">
+                            <span className="text-[10px] font-bold text-amber-900 block">3위 추가 포인트</span>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="5"
+                                value={currentVals.third}
+                                onChange={(e) => updateTier('third', Number(e.target.value) || 0)}
+                                className="w-full bg-white border border-amber-800/30 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-700"
+                              />
+                              <span className="text-xs font-extrabold text-amber-900 shrink-0">P</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
               </div>
 
               {/* Unified Round Management: Time Adjustment & Delete in ONE */}

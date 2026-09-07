@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { UserProfile, TreeLevelConfig, PledgeItem } from '../types';
 import { createPledge, calculateTreeLevel } from '../lib/dataService';
 import { DEFAULT_PRESET_PLEDGES } from '../lib/firebase';
-import { Sparkles, Check, X, ShieldAlert, Hash } from 'lucide-react';
+import { Sparkles, Check, X, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { playCorrectSound, playClickSound } from '../lib/sound';
 
 interface PledgeModalProps {
@@ -24,7 +24,7 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
   presetPledges,
   onPledgeCreated,
 }) => {
-  const [content, setContent] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
 
   if (!isOpen || !user) return null;
@@ -34,15 +34,11 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
   // Get list of promises already registered by this 4-digit participant
   const myExistingPledges = existingPledges.filter((p) => p.userId === user.id || p.userCode === user.code);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = content.trim();
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = selectedPreset.trim();
     if (!trimmed) {
-      setErrorMsg('실천 약속 내용을 입력해 주세요.');
-      return;
-    }
-    if (trimmed.length < 5) {
-      setErrorMsg('약속 내용을 5자 이상 성실히 작성해 주세요.');
+      setErrorMsg('목록에서 등록할 실천 약속을 하나 선택해 주세요.');
       return;
     }
 
@@ -51,7 +47,7 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
       (p) => p.content.trim().toLowerCase() === trimmed.toLowerCase()
     );
     if (isDuplicate) {
-      setErrorMsg('이미 등록하신 동일한 실천 약속입니다! 다른 약속을 작성해 주세요.');
+      setErrorMsg('이미 등록하신 동일한 실천 약속입니다! 다른 약속을 선택해 주세요.');
       return;
     }
 
@@ -74,7 +70,7 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
     playCorrectSound();
     onPledgeCreated(optimisticUser);
     const pledgeText = trimmed;
-    setContent('');
+    setSelectedPreset('');
     setErrorMsg('');
     onClose();
 
@@ -86,23 +82,24 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
 
   const handleSelectPreset = (preset: string) => {
     playClickSound();
-    setContent(preset);
+    setSelectedPreset(preset);
     setErrorMsg('');
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-lg bg-white border border-emerald-100 rounded-3xl p-6 sm:p-7 shadow-2xl text-slate-800 relative">
+      <div className="w-full max-w-lg bg-white border border-emerald-100 rounded-3xl p-6 sm:p-7 shadow-2xl text-slate-800 relative flex flex-col max-h-[92vh] overflow-hidden">
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+          className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+          aria-label="닫기"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Header */}
-        <div className="text-center mb-5">
+        <div className="text-center mb-4 shrink-0">
           <div className="inline-flex p-3 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-100 mb-2">
             <Sparkles className="w-7 h-7" />
           </div>
@@ -119,17 +116,17 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
         </div>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs flex items-center gap-2">
+          <div className="mb-3 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs flex items-center gap-2 shrink-0">
             <ShieldAlert className="w-4 h-4 flex-shrink-0" />
             <span className="font-semibold">{errorMsg}</span>
           </div>
         )}
 
-        {/* Quick Presets */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-1.5">
+        {/* Presets Selection List */}
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1 mb-4">
+          <div className="flex items-center justify-between mb-1">
             <label className="block text-xs font-bold text-slate-700">
-              추천 실천 약속 (클릭 시 자동 입력)
+              실천할 약속을 목록에서 선택해 주세요
             </label>
             {myExistingPledges.length > 0 && (
               <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
@@ -137,84 +134,98 @@ export const PledgeModal: React.FC<PledgeModalProps> = ({
               </span>
             )}
           </div>
-          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-            {activePresets.length === 0 ? (
-              <div className="text-center py-3 text-xs text-slate-400 bg-slate-50 rounded-xl border border-slate-200">
-                등록된 추천 실천 약속 문구가 없습니다.
-              </div>
-            ) : (
-              activePresets.map((preset, idx) => {
-                const alreadyUsed = myExistingPledges.some(
-                  (p) => p.content.trim().toLowerCase() === preset.trim().toLowerCase()
-                );
-                return (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleSelectPreset(preset)}
-                    className={`w-full text-left text-xs p-2 rounded-xl border transition flex items-center justify-between gap-2 cursor-pointer ${
-                      content === preset
-                        ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold'
-                        : alreadyUsed
-                        ? 'bg-slate-100/70 border-slate-200 text-slate-400 hover:bg-slate-100'
-                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <span className="truncate">{preset}</span>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {alreadyUsed && (
-                        <span className="text-[10px] text-slate-500 font-bold bg-slate-200/80 px-1.5 py-0.5 rounded">
-                          이미 작성함
-                        </span>
-                      )}
-                      {content === preset && <Check className="w-3.5 h-3.5 text-emerald-600 ml-1" />}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
+
+          {activePresets.length === 0 ? (
+            <div className="text-center py-6 text-xs text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
+              등록된 실천 약속 문구가 없습니다.
+            </div>
+          ) : (
+            activePresets.map((preset, idx) => {
+              const alreadyUsed = myExistingPledges.some(
+                (p) => p.content.trim().toLowerCase() === preset.trim().toLowerCase()
+              );
+              const isSelected = selectedPreset === preset;
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={alreadyUsed}
+                  onClick={() => handleSelectPreset(preset)}
+                  className={`w-full text-left p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-50/90 border-emerald-500 text-emerald-950 font-bold ring-2 ring-emerald-500/20 shadow-xs'
+                      : alreadyUsed
+                      ? 'bg-slate-100/60 border-slate-200 text-slate-400 cursor-not-allowed'
+                      : 'bg-slate-50/80 hover:bg-slate-100 border-slate-200/80 text-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold mt-0.5 ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {idx + 1}
+                    </span>
+                    <span className="text-xs leading-relaxed break-keep">{preset}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {alreadyUsed ? (
+                      <span className="text-[10px] text-slate-500 font-bold bg-slate-200 px-2 py-0.5 rounded-md">
+                        이미 등록됨
+                      </span>
+                    ) : isSelected ? (
+                      <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                        <Check className="w-4 h-4" />
+                      </div>
+                    ) : (
+                      <div className="w-6 h-6 rounded-full border border-slate-300 bg-white" />
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
         </div>
 
-        {/* Custom Textarea Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              실천 약속 직접 작성
-            </label>
-            <textarea
-              value={content}
-              onChange={(e) => {
-                setContent(e.target.value);
-                if (errorMsg) setErrorMsg('');
-              }}
-              rows={3}
-              maxLength={120}
-              placeholder="나만의 개인정보보호 실천 약속을 작성해 주세요..."
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 focus:border-emerald-500 focus:bg-white rounded-xl text-sm text-slate-900 placeholder-slate-400 outline-none transition resize-none shadow-xs"
-            />
-            <div className="text-right text-[11px] text-slate-400 mt-1">
-              {content.length} / 120자
+        {/* Selected Preview & Submit */}
+        <div className="pt-3 border-t border-slate-100 shrink-0 space-y-3">
+          {selectedPreset ? (
+            <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 text-xs flex items-center gap-2 text-emerald-900">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="font-bold truncate">선택됨: &ldquo;{selectedPreset}&rdquo;</span>
             </div>
-          </div>
+          ) : (
+            <p className="text-center text-[11px] text-slate-400">
+              위 목록에서 실천할 약속을 1개 터치하여 선택해 주세요.
+            </p>
+          )}
 
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+              className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
             >
               취소
             </button>
             <button
-              type="submit"
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-extrabold shadow-md shadow-emerald-700/20 flex items-center justify-center gap-1.5 transition active:scale-98 cursor-pointer"
+              type="button"
+              onClick={() => handleSubmit()}
+              disabled={!selectedPreset}
+              className={`flex-1 py-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-98 ${
+                selectedPreset
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-700/20 cursor-pointer'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
             >
-              <Sparkles className="w-4 h-4 text-emerald-200" />
-              <span>약속 등록 (+30P)</span>
+              <Sparkles className="w-4 h-4" />
+              <span>실천 약속 등록하기 (+30P)</span>
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

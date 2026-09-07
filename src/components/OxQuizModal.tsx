@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, OXQuiz } from '../types';
 import { completeOxQuizQuestion } from '../lib/dataService';
 import { Droplet, X as XIcon, ArrowRight, Hash } from 'lucide-react';
@@ -25,6 +25,21 @@ export const OxQuizModal: React.FC<OxQuizModalProps> = ({
   const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Automatically start at the first uncompleted question when opening modal
+  useEffect(() => {
+    if (isOpen && user) {
+      const completed = user.completedOxIds || [];
+      const firstUncompleted = activeQuizzes.findIndex((q) => !completed.includes(q.id));
+      if (firstUncompleted !== -1) {
+        setCurrentIndex(firstUncompleted);
+      } else {
+        setCurrentIndex(activeQuizzes.length);
+      }
+      setSelectedAnswer(null);
+      setIsAnswerSubmitted(false);
+    }
+  }, [isOpen]);
+
   if (!isOpen || !user) return null;
 
   const currentQuiz = activeQuizzes[currentIndex];
@@ -39,8 +54,8 @@ export const OxQuizModal: React.FC<OxQuizModalProps> = ({
     setSelectedAnswer(choice);
   };
 
-  const handleConfirmAnswer = () => {
-    if (selectedAnswer === null || !currentQuiz || isAnswerSubmitted) return;
+  const handleConfirmAnswer = async () => {
+    if (selectedAnswer === null || !currentQuiz || isAnswerSubmitted || isSubmitting) return;
     const isCorrect = selectedAnswer === currentQuiz.answer;
 
     if (isCorrect) {
@@ -49,32 +64,36 @@ export const OxQuizModal: React.FC<OxQuizModalProps> = ({
       playIncorrectSound();
     }
 
-    const dropsEarned = isCorrect && !alreadyCompleted ? 1 : 0;
-
+    setIsSubmitting(true);
     setIsAnswerSubmitted(true);
 
-    const completed = user.completedOxIds || [];
-    const newCompleted = completed.includes(currentQuiz.id)
-      ? completed
-      : [...completed, currentQuiz.id];
-
-    const optimisticUser: UserProfile = {
-      ...user,
-      waterDrops: (user.waterDrops || 0) + dropsEarned,
-      completedOxIds: newCompleted,
-      lastActive: Date.now(),
-    };
-
-    onQuizCompleted(optimisticUser, dropsEarned);
-
-    completeOxQuizQuestion(
-      user,
-      currentQuiz.id,
-      isCorrect,
-      1
-    ).catch((err) => {
+    try {
+      const { updatedUser, dropsEarned } = await completeOxQuizQuestion(
+        user.id,
+        currentQuiz.id,
+        isCorrect,
+        1
+      );
+      onQuizCompleted(updatedUser, dropsEarned);
+    } catch (err) {
       console.error('OX Quiz background sync error:', err);
-    });
+      // Fallback update
+      const dropsEarned = isCorrect && !alreadyCompleted ? 1 : 0;
+      const completed = user.completedOxIds || [];
+      const newCompleted = completed.includes(currentQuiz.id)
+        ? completed
+        : [...completed, currentQuiz.id];
+
+      const optimisticUser: UserProfile = {
+        ...user,
+        waterDrops: (user.waterDrops || 0) + dropsEarned,
+        completedOxIds: newCompleted,
+        lastActive: Date.now(),
+      };
+      onQuizCompleted(optimisticUser, dropsEarned);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleNextQuestion = () => {
@@ -102,19 +121,22 @@ export const OxQuizModal: React.FC<OxQuizModalProps> = ({
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-sky-50 text-sky-600 border border-sky-100">
-              <Droplet className="w-5 h-5 fill-sky-500" />
+        <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100 pr-8 sm:pr-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="p-2 rounded-xl bg-sky-50 text-sky-600 border border-sky-100 shrink-0">
+              <Droplet className="w-4 h-4 sm:w-5 sm:h-5 fill-sky-500" />
             </div>
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                <span>개인정보보호 OX 퀴즈</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 font-bold">
-                  정답 시 물방울 지급
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs sm:text-base font-extrabold text-slate-900 whitespace-nowrap">
+                  개인정보보호 OX 퀴즈
+                </h3>
+                <span className="text-[9px] sm:text-[10px] leading-tight text-center px-1.5 py-0.5 sm:px-2 rounded-lg bg-sky-100 text-sky-800 font-bold shrink-0 flex flex-col sm:inline whitespace-nowrap">
+                  <span>정답 시</span>
+                  <span className="sm:ml-0.5">물방울 지급</span>
                 </span>
-              </h3>
-              <p className="text-[11px] text-slate-500 flex items-center gap-1">
+              </div>
+              <p className="text-[10px] sm:text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                 <span>참여자:</span>
                 <span className="font-mono font-bold text-emerald-800">{user.code}</span>
               </p>
@@ -241,7 +263,11 @@ export const OxQuizModal: React.FC<OxQuizModalProps> = ({
                   {selectedAnswer === currentQuiz.answer ? (
                     <>
                       <span className="text-xl">🎉</span>
-                      <span className="text-emerald-700">정답입니다! 물방울 1개가 적립되었습니다.</span>
+                      <span className="text-emerald-700">
+                        {alreadyCompleted
+                          ? '정답입니다! (이미 완료한 문항으로 물방울은 추가 지급되지 않습니다)'
+                          : '정답입니다! 물방울 1개가 적립되었습니다.'}
+                      </span>
                     </>
                   ) : (
                     <>

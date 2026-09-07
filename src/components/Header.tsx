@@ -1,6 +1,6 @@
 import React from 'react';
 import { UserProfile, AppSettings } from '../types';
-import { Droplet, Award, Bell, Shield, Volume2, VolumeX, LogOut, Settings, Sparkles, Hash } from 'lucide-react';
+import { Droplet, Award, Bell, Shield, Volume2, VolumeX, LogOut, Settings, Sparkles, Hash, Megaphone } from 'lucide-react';
 import { toggleSound, playClickSound } from '../lib/sound';
 import { normalizeSchedule, getRoundTimeStatus } from '../lib/scheduleUtils';
 
@@ -11,6 +11,7 @@ interface HeaderProps {
   onOpenGoldenBell: () => void;
   onOpenAdmin: () => void;
   onOpenHallOfFame: () => void;
+  onOpenGameGuide: () => void;
   onLogout?: () => void;
   soundActive: boolean;
   setSoundActive: (active: boolean) => void;
@@ -23,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGoldenBell,
   onOpenAdmin,
   onOpenHallOfFame,
+  onOpenGameGuide,
   onLogout,
   soundActive,
   setSoundActive,
@@ -147,20 +149,36 @@ export const Header: React.FC<HeaderProps> = ({
                   개인정보보호 주간
                 </span>
               </div>
-              <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-slate-900 flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                <span>개인정보 보호 약속나무</span>
-                <Sparkles className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-              </h1>
+              <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5">
+                <h1 className="text-xs sm:text-base font-extrabold tracking-tight text-slate-900 flex items-center gap-1 whitespace-nowrap">
+                  <span>개인정보 보호 약속나무</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                </h1>
+                <button
+                  type="button"
+                  id="btn-game-guide"
+                  onClick={() => {
+                    playClickSound();
+                    onOpenGameGuide();
+                  }}
+                  className="p-1 sm:px-2.5 sm:py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 border border-emerald-300 text-[11px] font-extrabold flex items-center justify-center gap-1 shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                  title="게임 설명 보기"
+                >
+                  <Megaphone className="w-3.5 h-3.5 text-emerald-700 animate-pulse" />
+                  <span className="hidden sm:inline">게임설명</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Sound & Admin & Logout Buttons (Mobile compact corner) */}
-          <div className="flex items-center gap-1 sm:hidden">
+          {/* Sound & Admin & Logout Buttons (Mobile compact bar) */}
+          <div className="flex items-center gap-1 sm:hidden shrink-0">
             <button
               id="btn-toggle-sound-mobile"
               onClick={handleToggleSound}
-              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition"
+              className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition flex items-center justify-center shrink-0 cursor-pointer"
               title={soundActive ? '소리 끄기' : '소리 켜기'}
+              aria-label="소리 토글"
             >
               {soundActive ? <Volume2 className="w-4 h-4 text-emerald-600" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
             </button>
@@ -170,8 +188,9 @@ export const Header: React.FC<HeaderProps> = ({
                 playClickSound();
                 onOpenAdmin();
               }}
-              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition"
+              className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition flex items-center justify-center shrink-0 cursor-pointer"
               title="관리자 설정"
+              aria-label="관리자 설정"
             >
               <Settings className="w-4 h-4" />
             </button>
@@ -182,7 +201,7 @@ export const Header: React.FC<HeaderProps> = ({
                   playClickSound();
                   if (onLogout) onLogout();
                 }}
-                className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 transition shadow-xs cursor-pointer flex items-center justify-center"
+                className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 transition shadow-xs cursor-pointer flex items-center justify-center shrink-0"
                 title="로그아웃"
                 aria-label="로그아웃"
               >
